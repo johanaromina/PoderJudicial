@@ -159,7 +159,7 @@ const PerfilScreen = ({ navigation }) => {
             />
             <StatCard
               title="Actuaciones"
-              value="8"
+              value="9"
               icon="document-text"
               color={COLORS.warning}
             />
