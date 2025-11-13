@@ -140,11 +140,22 @@ export const AuthProvider = ({ children }) => {
       console.log('useAuth - es objeto:', response && typeof response === 'object');
       console.log('useAuth - propiedades de response:', response ? Object.keys(response) : 'response es null/undefined');
       
-      // Extraer datos de la respuesta del servidor
-      const { user, tokens } = response.data;
-      const { accessToken, refreshToken } = tokens;
+      // Extraer datos de la respuesta del servidor (API: { success, message, data: { user, tokens } })
+      const { user: rawUser, tokens } = (response && response.data) ? response.data : {};
+      const { user, tokens: tokensNested } = (response && response.data && response.data.data) ? response.data.data : {};
+      const finalUser = user || rawUser;
+      const finalTokens = tokens || tokensNested || {};
+      if (!finalUser || !finalTokens.accessToken) {
+        throw new Error('Respuesta de login inesperada');
+      }
+      const { accessToken, refreshToken } = finalTokens;
       
-      console.log('useAuth - datos extraídos:', { user, accessToken, refreshToken });
+      // Normalizar rol a mayúsculas para alinearlo con USER_ROLES
+      const normalizedUser = {
+        ...finalUser,
+        rol: (finalUser.rol || finalUser.rol_nombre || '').toUpperCase()
+      };
+      console.log('useAuth - datos extraídos:', { user: normalizedUser, accessToken, refreshToken });
       
       // Guardar tokens en AsyncStorage
       console.log('useAuth - guardando tokens en AsyncStorage...');
@@ -152,10 +163,15 @@ export const AuthProvider = ({ children }) => {
         AsyncStorage.setItem('auth_token', accessToken),
         AsyncStorage.setItem('auth_refresh_token', refreshToken)
       ]);
+      // Fallback Web: también guardar en localStorage
+      try { if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('auth_token', accessToken);
+        window.localStorage.setItem('auth_refresh_token', refreshToken);
+      }} catch {}
       console.log('useAuth - tokens guardados exitosamente');
 
       console.log('useAuth - datos para dispatch:', {
-        user: user,
+        user: normalizedUser,
         token: accessToken,
         refreshToken: refreshToken
       });
@@ -163,7 +179,7 @@ export const AuthProvider = ({ children }) => {
       dispatch({
         type: AUTH_ACTIONS.LOGIN_SUCCESS,
         payload: {
-          user: user,
+          user: normalizedUser,
           token: accessToken,
           refreshToken: refreshToken
         }
@@ -189,28 +205,38 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  // Función de logout
+  // Función de logout (rápida, fire-and-forget)
   const signOut = async () => {
+    // Disparar logout en el servidor pero no bloquear la UI
     try {
-      await authApi.logout();
-    } catch (error) {
-      console.error('Error en logout:', error);
-    } finally {
-      // Limpiar tokens del AsyncStorage
-      await Promise.all([
-        AsyncStorage.removeItem('auth_token'),
-        AsyncStorage.removeItem('auth_refresh_token'),
-        AsyncStorage.removeItem('user')
-      ]);
+      authApi.logout().catch(() => {});
+    } catch {}
 
-      dispatch({ type: AUTH_ACTIONS.LOGOUT });
-    }
+      try {
+        await Promise.all([
+          AsyncStorage.removeItem('auth_token'),
+          AsyncStorage.removeItem('auth_refresh_token'),
+          AsyncStorage.removeItem('user')
+        ]);
+        try { if (typeof window !== 'undefined' && window.localStorage) {
+          window.localStorage.removeItem('auth_token');
+          window.localStorage.removeItem('auth_refresh_token');
+          window.localStorage.removeItem('user');
+        }} catch {}
+      } catch (storageError) {
+        console.error('Error limpiando tokens:', storageError);
+      } finally {
+        dispatch({ type: AUTH_ACTIONS.LOGOUT });
+      }
   };
 
   // Función para refrescar token
   const refreshToken = async () => {
     try {
-      const currentRefreshToken = await AsyncStorage.getItem('auth_refresh_token');
+      let currentRefreshToken = await AsyncStorage.getItem('auth_refresh_token');
+      if (!currentRefreshToken && typeof window !== 'undefined' && window.localStorage) {
+        try { currentRefreshToken = window.localStorage.getItem('auth_refresh_token'); } catch {}
+      }
       if (!currentRefreshToken) {
         throw new Error('No hay refresh token');
       }
@@ -222,6 +248,10 @@ export const AuthProvider = ({ children }) => {
         AsyncStorage.setItem('auth_token', response.accessToken),
         AsyncStorage.setItem('auth_refresh_token', response.refreshToken)
       ]);
+      try { if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('auth_token', response.accessToken);
+        window.localStorage.setItem('auth_refresh_token', response.refreshToken);
+      }} catch {}
 
       dispatch({
         type: AUTH_ACTIONS.REFRESH_TOKEN,
@@ -250,22 +280,27 @@ export const AuthProvider = ({ children }) => {
       console.log('Bootstrap - iniciando verificación de autenticación...');
       dispatch({ type: AUTH_ACTIONS.SET_LOADING, payload: true });
       
-      const token = await AsyncStorage.getItem('auth_token');
+      let token = await AsyncStorage.getItem('auth_token');
+      if (!token && typeof window !== 'undefined' && window.localStorage) {
+        try { token = window.localStorage.getItem('auth_token'); } catch {}
+      }
       console.log('Bootstrap - token encontrado:', !!token);
       
       if (token) {
         console.log('Bootstrap - verificando usuario con token...');
         try {
-          const user = await authApi.me();
-          console.log('Bootstrap - usuario verificado:', user);
-          dispatch({
-            type: AUTH_ACTIONS.LOGIN_SUCCESS,
-            payload: {
-              user,
-              token,
-              refreshToken: await AsyncStorage.getItem('auth_refresh_token')
-            }
-          });
+      const meResponse = await authApi.me();
+      const meUser = meResponse?.data?.user || meResponse?.data?.data?.user || meResponse?.user; 
+      const normalizedMeUser = meUser ? { ...meUser, rol: (meUser.rol || meUser.rol_nombre || '').toUpperCase() } : null;
+      console.log('Bootstrap - usuario verificado:', normalizedMeUser);
+      dispatch({
+        type: AUTH_ACTIONS.LOGIN_SUCCESS,
+        payload: {
+          user: normalizedMeUser,
+          token,
+          refreshToken: await AsyncStorage.getItem('auth_refresh_token')
+        }
+      });
         } catch (meError) {
           console.error('Bootstrap - error al verificar usuario:', meError);
           // Si falla la verificación del usuario, limpiar tokens

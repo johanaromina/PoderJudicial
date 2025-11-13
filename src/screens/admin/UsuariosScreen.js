@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -8,68 +8,39 @@ import {
   RefreshControl,
   TextInput,
   Alert,
-  Image
+  Image,
+  ActivityIndicator
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
-import { USER_ROLES, USER_STATUS } from '../../types';
+import { USER_ROLES } from '../../types';
+import { useUsersList, useRoles, useToggleUserState } from '../../hooks/useUsers';
 
 const UsuariosScreen = ({ navigation }) => {
-  const { user, hasPermission } = useAuth();
-  const [refreshing, setRefreshing] = useState(false);
+  const { user } = useAuth();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('todos');
+  const [page, setPage] = useState(1);
 
-  // Mock data para usuarios (en producción esto vendría de la API)
-  const mockUsuarios = [
-    {
-      id: 1,
-      nombre: 'Administrador del Sistema',
-      email: 'admin@spjt.com',
-      rol: 'admin',
-      estado: 'activo',
-      ultimo_acceso: '2025-08-22T10:00:00Z',
-      institucion: 'Secretaría General'
-    },
-    {
-      id: 2,
-      nombre: 'Dr. Juan Pérez',
-      email: 'juez.perez@spjt.com',
-      rol: 'juez',
-      estado: 'activo',
-      ultimo_acceso: '2025-08-22T09:30:00Z',
-      institucion: 'Juzgado Civil N° 1'
-    },
-    {
-      id: 3,
-      nombre: 'Lic. María González',
-      email: 'secretaria.gonzalez@spjt.com',
-      rol: 'secretario',
-      estado: 'activo',
-      ultimo_acceso: '2025-08-22T08:45:00Z',
-      institucion: 'Juzgado Civil N° 1'
-    },
-    {
-      id: 4,
-      nombre: 'Carlos Rodríguez',
-      email: 'operador.rodriguez@spjt.com',
-      rol: 'operador',
-      estado: 'activo',
-      ultimo_acceso: '2025-08-22T07:15:00Z',
-      institucion: 'Secretaría General'
-    }
-  ];
+  const { data: rolesData } = useRoles();
+  const {
+    data: usuariosData,
+    isLoading,
+    isFetching,
+    refetch,
+  } = useUsersList({
+    page,
+    search: searchQuery || undefined,
+    rol: selectedFilter !== 'todos' ? selectedFilter : undefined,
+  });
+  const toggleUserState = useToggleUserState();
 
-  const onRefresh = React.useCallback(() => {
-    setRefreshing(true);
-    // Aquí podrías recargar datos de la API
-    setTimeout(() => setRefreshing(false), 1000);
-  }, []);
+  const usuarios = usuariosData?.usuarios ?? [];
+  const paginacion = usuariosData?.paginacion;
 
   const handleNuevoUsuario = () => {
-    if (hasPermission('usuarios.write')) {
+    if (user?.rol === USER_ROLES.ADMIN) {
       navigation.navigate('NuevoUsuario');
     } else {
       Alert.alert('Acceso Denegado', 'No tienes permisos para crear usuarios.');
@@ -77,7 +48,7 @@ const UsuariosScreen = ({ navigation }) => {
   };
 
   const handleEditarUsuario = (usuario) => {
-    if (hasPermission('usuarios.write')) {
+    if (user?.rol === USER_ROLES.ADMIN) {
       navigation.navigate('EditarUsuario', { usuarioId: usuario.id });
     } else {
       Alert.alert('Acceso Denegado', 'No tienes permisos para editar usuarios.');
@@ -85,16 +56,26 @@ const UsuariosScreen = ({ navigation }) => {
   };
 
   const handleCambiarEstado = (usuario) => {
-    if (hasPermission('usuarios.write')) {
-      const newStatus = usuario.estado === 'activo' ? 'inactivo' : 'activo';
+    if (user?.rol === USER_ROLES.ADMIN) {
+      const nuevoEstado = !usuario.activo;
       Alert.alert(
         'Cambiar Estado',
-        `¿Está seguro que desea ${newStatus === 'activo' ? 'activar' : 'desactivar'} al usuario ${usuario.nombre}?`,
+        `¿Está seguro que desea ${nuevoEstado ? 'activar' : 'desactivar'} al usuario ${usuario.nombre}?`,
         [
           { text: 'Cancelar', style: 'cancel' },
           { text: 'Confirmar', onPress: () => {
-            // Aquí implementarías la lógica para cambiar el estado
-            Alert.alert('Éxito', `Usuario ${newStatus === 'activo' ? 'activado' : 'desactivado'} correctamente.`);
+            toggleUserState.mutate(
+              { id: usuario.id, activo: nuevoEstado },
+              {
+                onSuccess: () => {
+                  Alert.alert('Éxito', `Usuario ${nuevoEstado ? 'activado' : 'desactivado'} correctamente.`);
+                },
+                onError: (error) => {
+                  const message = error?.response?.data?.message || 'No se pudo cambiar el estado del usuario.';
+                  Alert.alert('Error', message);
+                },
+              }
+            );
           }}
         ]
       );
@@ -124,7 +105,7 @@ const UsuariosScreen = ({ navigation }) => {
   };
 
   const getStatusColor = (estado) => {
-    return estado === 'activo' ? COLORS.success : COLORS.text.disabled;
+  return estado === true || estado === 'activo' ? COLORS.success : COLORS.text.disabled;
   };
 
   const FilterButton = ({ title, value, isSelected, onPress }) => (
@@ -147,11 +128,14 @@ const UsuariosScreen = ({ navigation }) => {
         <View style={styles.usuarioInfo}>
           <Text style={styles.usuarioNombre}>{usuario.nombre}</Text>
           <Text style={styles.usuarioEmail}>{usuario.email}</Text>
+          <Text style={styles.usuarioPermisos}>
+            Permisos: {usuario.permisos?.length ? usuario.permisos.join(', ') : 'No asignados'}
+          </Text>
         </View>
         <View style={styles.usuarioStatus}>
-          <View style={[styles.statusDot, { backgroundColor: getStatusColor(usuario.estado) }]} />
-          <Text style={[styles.statusText, { color: getStatusColor(usuario.estado) }]}>
-            {usuario.estado === 'activo' ? 'Activo' : 'Inactivo'}
+          <View style={[styles.statusDot, { backgroundColor: getStatusColor(usuario.activo) }]} />
+          <Text style={[styles.statusText, { color: getStatusColor(usuario.activo) }]}>
+            {usuario.activo ? 'Activo' : 'Inactivo'}
           </Text>
         </View>
       </View>
@@ -165,7 +149,7 @@ const UsuariosScreen = ({ navigation }) => {
         <View style={styles.detailRow}>
           <Ionicons name="calendar" size={16} color={COLORS.text.secondary} />
           <Text style={styles.detailText}>
-            Último acceso: {new Date(usuario.ultimo_acceso).toLocaleDateString('es-AR')}
+            Último acceso: {usuario.ultimoAcceso ? new Date(usuario.ultimoAcceso).toLocaleDateString('es-AR') : 'Sin registro'}
           </Text>
         </View>
       </View>
@@ -178,7 +162,7 @@ const UsuariosScreen = ({ navigation }) => {
         </View>
         
         <View style={styles.actionButtons}>
-          {hasPermission('usuarios.write') && (
+          {user?.rol === USER_ROLES.ADMIN && (
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => handleEditarUsuario(usuario)}
@@ -187,15 +171,15 @@ const UsuariosScreen = ({ navigation }) => {
             </TouchableOpacity>
           )}
           
-          {hasPermission('usuarios.write') && (
+          {user?.rol === USER_ROLES.ADMIN && (
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => handleCambiarEstado(usuario)}
             >
-              <Ionicons 
-                name={usuario.estado === 'activo' ? 'pause-circle' : 'play-circle'} 
-                size={20} 
-                color={usuario.estado === 'activo' ? COLORS.warning : COLORS.success} 
+              <Ionicons
+                name={usuario.activo ? 'pause-circle' : 'play-circle'}
+                size={20}
+                color={usuario.activo ? COLORS.warning : COLORS.success}
               />
             </TouchableOpacity>
           )}
@@ -204,13 +188,15 @@ const UsuariosScreen = ({ navigation }) => {
     </View>
   );
 
-  // Filtrar usuarios según búsqueda y filtros
-  const filteredUsuarios = mockUsuarios.filter(usuario => {
-    const matchesSearch = usuario.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         usuario.email.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesFilter = selectedFilter === 'todos' || usuario.rol === selectedFilter;
-    return matchesSearch && matchesFilter;
-  });
+  const filteredUsuarios = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLowerCase();
+    return usuarios.filter(usuario => {
+      const matchesSearch = normalizedSearch.length === 0 ||
+        usuario.nombre?.toLowerCase().includes(normalizedSearch) ||
+        usuario.email?.toLowerCase().includes(normalizedSearch);
+      return matchesSearch;
+    });
+  }, [usuarios, searchQuery]);
 
   return (
     <View style={styles.container}>
@@ -283,7 +269,7 @@ const UsuariosScreen = ({ navigation }) => {
       </View>
 
       {/* Botón Nuevo Usuario */}
-      {hasPermission('usuarios.write') && (
+      {user?.rol === USER_ROLES.ADMIN && (
         <TouchableOpacity style={styles.nuevoUsuarioButton} onPress={handleNuevoUsuario}>
           <Ionicons name="person-add" size={24} color={COLORS.text.inverse} />
           <Text style={styles.nuevoUsuarioText}>Nuevo Usuario</Text>
@@ -294,11 +280,16 @@ const UsuariosScreen = ({ navigation }) => {
       <ScrollView
         style={styles.usuariosList}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          <RefreshControl refreshing={isFetching} onRefresh={refetch} />
         }
         showsVerticalScrollIndicator={false}
       >
-        {filteredUsuarios.length > 0 ? (
+        {isLoading ? (
+          <View style={styles.emptyContainer}>
+            <ActivityIndicator size="large" color={COLORS.primary} />
+            <Text style={styles.loadingText}>Cargando usuarios...</Text>
+          </View>
+        ) : filteredUsuarios.length > 0 ? (
           filteredUsuarios.map((usuario) => (
             <UsuarioCard key={usuario.id} usuario={usuario} />
           ))
@@ -315,6 +306,28 @@ const UsuariosScreen = ({ navigation }) => {
           </View>
         )}
       </ScrollView>
+
+      {paginacion && paginacion.totalPages > 1 && (
+        <View style={styles.pagination}>
+          <TouchableOpacity
+            style={[styles.pageButton, page === 1 && styles.pageButtonDisabled]}
+            onPress={() => page > 1 && setPage(page - 1)}
+            disabled={page === 1}
+          >
+            <Ionicons name="chevron-back" size={20} color={page === 1 ? COLORS.text.disabled : COLORS.primary} />
+          </TouchableOpacity>
+          <Text style={styles.pageInfo}>
+            Página {page} de {paginacion.totalPages}
+          </Text>
+          <TouchableOpacity
+            style={[styles.pageButton, page >= paginacion.totalPages && styles.pageButtonDisabled]}
+            onPress={() => page < paginacion.totalPages && setPage(page + 1)}
+            disabled={page >= paginacion.totalPages}
+          >
+            <Ionicons name="chevron-forward" size={20} color={page >= paginacion.totalPages ? COLORS.text.disabled : COLORS.primary} />
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };

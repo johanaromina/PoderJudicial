@@ -16,9 +16,13 @@ const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     try {
-      const token = await AsyncStorage.getItem('auth_token');
+      let token = await AsyncStorage.getItem('auth_token');
+      // Fallback para Web: usar localStorage si no hay token en AsyncStorage
+      if (!token && typeof window !== 'undefined' && window.localStorage) {
+        try { token = window.localStorage.getItem('auth_token'); } catch {}
+      }
       if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+        config.headers = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
       }
     } catch (error) {
       console.error('Error getting token from storage:', error);
@@ -53,15 +57,19 @@ api.interceptors.response.use(
             { skipAuthRefresh: true } // Evitar loop infinito
           );
 
-          const { accessToken, refreshToken: newRefreshToken } = response.data;
+          const refreshData = response.data?.data || response.data;
+          const accessToken = refreshData?.accessToken;
+          const newRefreshToken = refreshData?.refreshToken || refreshToken;
 
-          // Guardar nuevos tokens
-          await AsyncStorage.setItem('auth_token', accessToken);
-          await AsyncStorage.setItem('auth_refresh_token', newRefreshToken);
+          if (accessToken) {
+            // Guardar nuevos tokens
+            await AsyncStorage.setItem('auth_token', accessToken);
+            await AsyncStorage.setItem('auth_refresh_token', newRefreshToken);
 
-          // Reintentar la petición original
-          originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-          return api(originalRequest);
+            // Reintentar la petición original
+            originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+            return api(originalRequest);
+          }
         }
       } catch (refreshError) {
         console.error('Error refreshing token:', refreshError);

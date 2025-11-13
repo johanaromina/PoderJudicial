@@ -1,24 +1,75 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Image
+  Image,
+  ActivityIndicator,
+  Platform,
+  ToastAndroid,
+  Alert
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
 import { USER_ROLES } from '../../types';
+import { CommonActions } from '@react-navigation/native';
 
 const CustomDrawerContent = (props) => {
   const { user, signOut, hasPermission } = useAuth();
   const { navigation } = props;
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  const handleLogout = () => {
-    signOut();
-    navigation.closeDrawer();
+  const showToast = (msg) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
+    } else if (Platform.OS === 'web') {
+      try { window.alert(msg); } catch { Alert.alert('', msg); }
+    } else {
+      Alert.alert('', msg);
+    }
+  };
+
+  const confirmLogout = async () => {
+    if (Platform.OS === 'web') {
+      try { return window.confirm('¿Está seguro que desea cerrar sesión?'); } catch { /* fallthrough */ }
+    }
+    return await new Promise((resolve) => {
+      Alert.alert(
+        'Cerrar Sesión',
+        '¿Está seguro que desea cerrar sesión?',
+        [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Cerrar Sesión', onPress: () => resolve(true) },
+        ]
+      );
+    });
+  };
+
+  const handleLogout = async () => {
+    const confirmed = await confirmLogout();
+    if (!confirmed) return;
+    try {
+      setLoggingOut(true);
+      await signOut();
+      showToast('Sesión cerrada');
+    } finally {
+      navigation.closeDrawer();
+      const resetAction = CommonActions.reset({
+        index: 0,
+        routes: [{ name: 'Auth' }],
+      });
+
+      const rootNavigation = navigation.getParent();
+      if (rootNavigation) {
+        rootNavigation.dispatch(resetAction);
+      } else {
+        navigation.dispatch(resetAction);
+      }
+    }
+    setLoggingOut(false);
   };
 
   const getRoleDisplayName = (rol) => {
@@ -108,7 +159,7 @@ const CustomDrawerContent = (props) => {
           title="Inicio"
           subtitle="Dashboard principal"
           onPress={() => {
-            navigation.navigate('Home');
+            navigation.navigate('MainTabs', { screen: 'Home' });
             navigation.closeDrawer();
           }}
         />
@@ -118,7 +169,7 @@ const CustomDrawerContent = (props) => {
           title="Expedientes"
           subtitle="Gestión de expedientes judiciales"
           onPress={() => {
-            navigation.navigate('Expedientes');
+            navigation.navigate('MainTabs', { screen: 'Expedientes' });
             navigation.closeDrawer();
           }}
         />
@@ -128,7 +179,7 @@ const CustomDrawerContent = (props) => {
           title="Documentos"
           subtitle="Gestión de documentos"
           onPress={() => {
-            navigation.navigate('Documentos');
+            navigation.navigate('MainTabs', { screen: 'Documentos' });
             navigation.closeDrawer();
           }}
         />
@@ -143,7 +194,7 @@ const CustomDrawerContent = (props) => {
               title="Usuarios"
               subtitle="Gestión de usuarios del sistema"
               onPress={() => {
-                navigation.navigate('Usuarios');
+                navigation.navigate('MainTabs', { screen: 'Usuarios' });
                 navigation.closeDrawer();
               }}
             />
@@ -153,7 +204,7 @@ const CustomDrawerContent = (props) => {
               title="Auditoría"
               subtitle="Registros de actividad del sistema"
               onPress={() => {
-                navigation.navigate('Auditoria');
+                navigation.navigate('MainTabs', { screen: 'Auditoria' });
                 navigation.closeDrawer();
               }}
             />
@@ -229,9 +280,13 @@ const CustomDrawerContent = (props) => {
 
       {/* Footer del drawer */}
       <View style={styles.drawerFooter}>
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={20} color={COLORS.error} />
-          <Text style={styles.logoutText}>Cerrar Sesión</Text>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} disabled={loggingOut}>
+          {loggingOut ? (
+            <ActivityIndicator size={20} color={COLORS.error} />
+          ) : (
+            <Ionicons name="log-out-outline" size={20} color={COLORS.error} />
+          )}
+          <Text style={styles.logoutText}>{loggingOut ? 'Cerrando…' : 'Cerrar Sesión'}</Text>
         </TouchableOpacity>
         
         <View style={styles.footerInfo}>

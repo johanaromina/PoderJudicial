@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,19 +7,29 @@ import {
   TouchableOpacity,
   Alert,
   Image,
-  RefreshControl
+  RefreshControl,
+  TextInput
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { expedientesApi } from '../../api/expedientes.api';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
+import { ENV } from '../../config/env';
 
 const ExpedienteDetailScreen = ({ route, navigation }) => {
   const { id } = route.params;
   const { user, hasPermission } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState('general');
+  const scrollRef = useRef(null);
+
+  const goToDocumentos = () => {
+    setActiveTab('documentos');
+    setTimeout(() => {
+      try { scrollRef.current && scrollRef.current.scrollTo({ y: 0, animated: true }); } catch {}
+    }, 60);
+  };
 
   // Obtener datos del expediente
   const { data: expediente, isLoading, error, refetch } = useQuery({
@@ -28,14 +38,18 @@ const ExpedienteDetailScreen = ({ route, navigation }) => {
     staleTime: 5 * 60 * 1000,
   });
 
-  // Obtener actuaciones del expediente
-  const { data: actuaciones } = useQuery({
-    queryKey: ['actuaciones', id],
-    queryFn: () => expedientesApi.getActuaciones(id),
-    staleTime: 5 * 60 * 1000,
+  // Estado y consulta de actuaciones (paginación + búsqueda)
+  const [actPage, setActPage] = useState(1);
+  const [actLimit, setActLimit] = useState(10);
+  const [actSearch, setActSearch] = useState('');
+  const { data: actuacionesResp, refetch: refetchAct } = useQuery({
+    queryKey: ['actuaciones', id, actPage, actLimit],
+    queryFn: () => expedientesApi.getActuaciones(id, { page: actPage, limit: actLimit }),
+    staleTime: 60 * 1000,
+    keepPreviousData: true,
   });
 
-  // Obtener documentos del expediente
+  // Obtener documentos del expediente (normalizado)
   const { data: documentos } = useQuery({
     queryKey: ['documentos', id],
     queryFn: () => expedientesApi.getDocumentos(id),
@@ -102,15 +116,34 @@ const ExpedienteDetailScreen = ({ route, navigation }) => {
           <Text style={styles.actuacionTypeText}>{actuacion.tipo}</Text>
         </View>
         <Text style={styles.actuacionDate}>
-          {new Date(actuacion.fecha).toLocaleDateString('es-AR')}
+          {new Date(actuacion.fecha || actuacion.created_at).toLocaleString('es-AR')}
+          {actuacion.creado_por_nombre ? ` · por ${actuacion.creado_por_nombre}` : ''}
         </Text>
       </View>
       <Text style={styles.actuacionDescription}>{actuacion.descripcion}</Text>
+      <View style={styles.actuacionFooter}>
+        <TouchableOpacity style={styles.linkButton} onPress={goToDocumentos}>
+          <Ionicons name="folder" size={16} color={COLORS.secondary} />
+          <Text style={styles.linkButtonText}>Ver documentos del expediente</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 
   const DocumentoCard = ({ documento }) => (
-    <TouchableOpacity style={styles.documentoCard} activeOpacity={0.8}>
+    <TouchableOpacity style={styles.documentoCard} activeOpacity={0.8} onPress={async () => {
+      try {
+        // Descarga rápida (web): abrir blob en nueva pestaña
+        const base = ENV.API_BASE_URL || '';
+        const urlReq = `${base.replace(/\/$/, '')}/documentos/${documento.id}/download`;
+        const blob = await (await fetch(urlReq, { credentials: 'include' })).blob();
+        const url = URL.createObjectURL(blob);
+        try { window.open(url, '_blank'); } catch {}
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      } catch {
+        // Fallback: no-op
+      }
+    }}>
       <View style={styles.documentoIcon}>
         <Ionicons name="document" size={24} color={COLORS.primary} />
       </View>
@@ -181,6 +214,7 @@ const ExpedienteDetailScreen = ({ route, navigation }) => {
       </View>
 
       <ScrollView
+        ref={scrollRef}
         style={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -253,13 +287,13 @@ const ExpedienteDetailScreen = ({ route, navigation }) => {
             <View style={styles.statsContainer}>
               <View style={styles.statCard}>
                 <Ionicons name="document-text" size={32} color={COLORS.primary} />
-                <Text style={styles.statNumber}>{actuaciones?.length || 0}</Text>
+                <Text style={styles.statNumber}>{(actuacionesResp?.actuaciones || []).length}</Text>
                 <Text style={styles.statLabel}>Actuaciones</Text>
               </View>
               
               <View style={styles.statCard}>
                 <Ionicons name="folder" size={32} color={COLORS.secondary} />
-                <Text style={styles.statNumber}>{documentos?.length || 0}</Text>
+                <Text style={styles.statNumber}>{(documentos || []).length}</Text>
                 <Text style={styles.statLabel}>Documentos</Text>
               </View>
               
@@ -286,8 +320,43 @@ const ExpedienteDetailScreen = ({ route, navigation }) => {
               )}
             </View>
             
-            {actuaciones?.length > 0 ? (
-              actuaciones.map((actuacion) => (
+            {/* Filtros y acciones */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: SPACING.md, gap: SPACING.sm }}>
+              <View style={{ flex: 1, backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: BORDER_RADIUS.md, paddingHorizontal: SPACING.md, paddingVertical: SPACING.xs }}>
+                <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.text.secondary }}>Buscar</Text>
+                <TextInput
+                  placeholder="Tipo o descripción"
+                  value={actSearch}
+                  onChangeText={setActSearch}
+                  style={{ ...TYPOGRAPHY.body2, color: COLORS.text.primary, paddingVertical: 2 }}
+                />
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: SPACING.xs }}>
+                <TouchableOpacity disabled={actPage <= 1} onPress={() => setActPage(p => Math.max(1, p - 1))} style={[styles.pageButton, actPage <= 1 && { opacity: 0.5 }]}>
+                  <Ionicons name="chevron-back" size={18} color={COLORS.text.primary} />
+                </TouchableOpacity>
+                <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.text.secondary }}>
+                  Página {actuacionesResp?.paginacion?.page || actPage} / {actuacionesResp?.paginacion?.totalPages || 1}
+                </Text>
+                <TouchableOpacity disabled={(actuacionesResp?.paginacion?.page || 1) >= (actuacionesResp?.paginacion?.totalPages || 1)} onPress={() => setActPage(p => p + 1)} style={[styles.pageButton, ((actuacionesResp?.paginacion?.page || 1) >= (actuacionesResp?.paginacion?.totalPages || 1)) && { opacity: 0.5 }]}>
+                  <Ionicons name="chevron-forward" size={18} color={COLORS.text.primary} />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {((actuacionesResp?.actuaciones || [])
+              .filter(a => {
+                const q = (actSearch || '').toLowerCase();
+                if (!q) return true;
+                return (a.tipo || '').toLowerCase().includes(q) || (a.descripcion || '').toLowerCase().includes(q);
+              })).length > 0 ? (
+              (actuacionesResp?.actuaciones || [])
+                .filter(a => {
+                  const q = (actSearch || '').toLowerCase();
+                  if (!q) return true;
+                  return (a.tipo || '').toLowerCase().includes(q) || (a.descripcion || '').toLowerCase().includes(q);
+                })
+                .map((actuacion) => (
                 <ActuacionCard key={actuacion.id} actuacion={actuacion} />
               ))
             ) : (
@@ -570,6 +639,33 @@ const styles = StyleSheet.create({
     ...TYPOGRAPHY.body1,
     color: COLORS.text.primary,
     lineHeight: 22,
+  },
+  actuacionFooter: {
+    marginTop: SPACING.sm,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  linkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
+    paddingVertical: SPACING.xs,
+    paddingHorizontal: SPACING.sm,
+    borderRadius: BORDER_RADIUS.sm,
+  },
+  linkButtonText: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.secondary,
+    fontWeight: '600',
+    marginLeft: SPACING.xs,
+  },
+  pageButton: {
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: BORDER_RADIUS.round,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: SPACING.xs,
+    backgroundColor: COLORS.surface,
   },
   
   documentoCard: {

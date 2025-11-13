@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,8 +8,11 @@ import {
   RefreshControl,
   TextInput,
   Alert,
-  Image
+  Image,
+  Platform,
+  ToastAndroid
 } from 'react-native';
+import { useRoute } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { expedientesApi } from '../../api/expedientes.api';
@@ -18,10 +21,14 @@ import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme
 import { EXPEDIENTE_STATUS } from '../../types';
 
 const ExpedientesListScreen = ({ navigation }) => {
+  const route = useRoute();
   const { user, hasPermission } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('todos');
+  const [highlightId, setHighlightId] = useState(null);
+  const scrollRef = useRef(null);
+  const itemPositions = useRef({});
 
   // Obtener expedientes con React Query
   const { data: expedientes, isLoading, error, refetch } = useQuery({
@@ -32,6 +39,44 @@ const ExpedientesListScreen = ({ navigation }) => {
     }),
     staleTime: 5 * 60 * 1000, // 5 minutos
   });
+
+  // Cuando tengamos un highlightId y posiciones calculadas, hacer scroll al ítem
+  useEffect(() => {
+    if (!highlightId || !scrollRef.current) return;
+    const y = itemPositions.current[highlightId];
+    if (typeof y === 'number') {
+      const target = Math.max(y - 60, 0);
+      setTimeout(() => {
+        try { scrollRef.current.scrollTo({ y: target, animated: true }); } catch {}
+      }, 100);
+    }
+  }, [highlightId, expedientes]);
+
+  // Mostrar toast si viene por params (p.ej., después de crear)
+  useEffect(() => {
+    const toast = route.params?.toast;
+    const hl = route.params?.highlightId;
+    if (toast) {
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(toast, ToastAndroid.SHORT);
+      } else if (Platform.OS === 'web') {
+        try { window.alert(toast); } catch {}
+      } else {
+        Alert.alert('', toast);
+      }
+      // limpiar param para evitar repetición
+      try { navigation.setParams({ toast: undefined }); } catch {}
+    }
+    if (hl) {
+      setHighlightId(Number(hl));
+      // Refrescar datos para asegurar que el nuevo expediente aparezca
+      try { refetch(); } catch {}
+      // quitar highlight luego de unos segundos
+      const t = setTimeout(() => setHighlightId(null), 6000);
+      try { navigation.setParams({ highlightId: undefined }); } catch {}
+      return () => clearTimeout(t);
+    }
+  }, [route.params?.toast]);
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
@@ -83,9 +128,10 @@ const ExpedientesListScreen = ({ navigation }) => {
 
   const ExpedienteCard = ({ expediente }) => (
     <TouchableOpacity
-      style={styles.expedienteCard}
+      style={[styles.expedienteCard, expediente.id === highlightId && styles.expedienteCardHighlighted]}
       onPress={() => handleExpedientePress(expediente)}
       activeOpacity={0.8}
+      onLayout={(e) => { itemPositions.current[expediente.id] = e.nativeEvent.layout.y; }}
     >
       <View style={styles.cardHeader}>
         <View style={styles.expedienteNumber}>
@@ -217,7 +263,7 @@ const ExpedientesListScreen = ({ navigation }) => {
 
       {/* Botón Nuevo Expediente */}
       {hasPermission('expedientes.write') && (
-        <TouchableOpacity style={styles.nuevoExpedienteButton} onPress={handleNuevoExpediente}>
+      <TouchableOpacity style={styles.nuevoExpedienteButton} onPress={handleNuevoExpediente}>
           <Ionicons name="add-circle" size={24} color={COLORS.text.inverse} />
           <Text style={styles.nuevoExpedienteText}>Nuevo Expediente</Text>
         </TouchableOpacity>
@@ -225,6 +271,7 @@ const ExpedientesListScreen = ({ navigation }) => {
 
       {/* Lista de Expedientes */}
       <ScrollView
+        ref={scrollRef}
         style={styles.expedientesList}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -376,6 +423,10 @@ const styles = StyleSheet.create({
     padding: SPACING.md,
     marginBottom: SPACING.md,
     ...SHADOWS.medium,
+  },
+  expedienteCardHighlighted: {
+    borderWidth: 2,
+    borderColor: COLORS.primary,
   },
   
   cardHeader: {

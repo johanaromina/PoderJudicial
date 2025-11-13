@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, ActivityIndicator } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
@@ -19,9 +19,13 @@ const NuevoExpedienteScreen = lazy(() => import('../screens/home/NuevoExpediente
 const DocumentosScreen = lazy(() => import('../screens/docs/DocumentosScreen'));
 const SubirDocumentoScreen = lazy(() => import('../screens/docs/SubirDocumentoScreen'));
 const FirmarDocumentoScreen = lazy(() => import('../screens/docs/FirmarDocumentoScreen'));
-const UsuariosScreen = lazy(() => import('../screens/admin/UsuariosScreen'));
+const UsuariosScreen = lazy(() => import('../screens/admin/UsuariosScreenReal'));
 const AuditoriaScreen = lazy(() => import('../screens/admin/AuditoriaScreen'));
 const PerfilScreen = lazy(() => import('../screens/profile/PerfilScreen'));
+const ChangePasswordScreen = lazy(() => import('../screens/profile/ChangePasswordScreen.js'));
+const EditProfileScreen = lazy(() => import('../screens/profile/EditProfileScreen.js'));
+const SecuritySettingsScreen = lazy(() => import('../screens/profile/SecuritySettingsScreen.js'));
+const NuevoUsuarioScreen = lazy(() => import('../screens/admin/NuevoUsuarioScreen.js'));
 
 // Importar componentes de navegación
 import CustomDrawerContent from '../components/navigation/CustomDrawerContent';
@@ -166,81 +170,95 @@ const AppNavigator = () => {
 
   return (
     <NavigationContainer>
-      <Stack.Navigator 
-        screenOptions={{ 
-          headerShown: false,
-          cardStyleInterpolator: ({ current, layouts }) => ({
-            cardStyle: {
-              transform: [
-                {
-                  translateX: current.progress.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [layouts.screen.width, 0],
-                  }),
-                },
-              ],
-            },
-          }),
-          transitionSpec: {
-            open: {
-              animation: 'timing',
-              config: { duration: 400 },
-            },
-            close: {
-              animation: 'timing',
-              config: { duration: 400 },
-            },
-          },
-        }}
+      <Suspense
+        fallback={
+          <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#f5f5f5' }}>
+            <ActivityIndicator size="large" color="#1976d2" />
+            <Text style={{ marginTop: 12, fontSize: 16, color: '#1976d2' }}>Cargando vistas...</Text>
+          </View>
+        }
       >
-        {user ? (
-          // Usuario autenticado - mostrar navegación principal
-          <>
-            <Stack.Screen name="Main" component={DrawerNavigator} />
-            <Stack.Screen 
-              name="ExpedienteDetail" 
-              component={ExpedienteDetailScreen}
-              options={{
-                cardStyleInterpolator: ({ current, layouts }) => ({
-                  cardStyle: {
-                    transform: [
-                      {
-                        translateY: current.progress.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [layouts.screen.height, 0],
-                        }),
-                      },
-                    ],
+        <Stack.Navigator 
+          screenOptions={{ 
+            headerShown: false,
+            cardStyleInterpolator: ({ current, layouts }) => ({
+              cardStyle: {
+                transform: [
+                  {
+                    translateX: current.progress.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [layouts.screen.width, 0],
+                    }),
                   },
-                }),
-              }}
-            />
-            <Stack.Screen 
-              name="NuevoExpediente" 
-              component={NuevoExpedienteScreen}
-              options={{
-                cardStyleInterpolator: ({ current, layouts }) => ({
-                  cardStyle: {
-                    transform: [
-                      {
-                        scale: current.progress.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0.8, 1],
-                        }),
-                      },
-                    ],
-                  },
-                }),
-              }}
-            />
-            <Stack.Screen name="SubirDocumento" component={SubirDocumentoScreen} />
-            <Stack.Screen name="FirmarDocumento" component={FirmarDocumentoScreen} />
-          </>
-        ) : (
-          // Usuario no autenticado - mostrar navegación de auth
-          <Stack.Screen name="Auth" component={AuthNavigator} />
-        )}
-      </Stack.Navigator>
+                ],
+              },
+            }),
+            transitionSpec: {
+              open: {
+                animation: 'timing',
+                config: { duration: 400 },
+              },
+              close: {
+                animation: 'timing',
+                config: { duration: 400 },
+              },
+            },
+          }}
+        >
+          {user ? (
+            // Usuario autenticado - mostrar navegación principal
+            <>
+              <Stack.Screen name="Main" component={DrawerNavigator} />
+              <Stack.Screen 
+                name="ExpedienteDetail" 
+                component={ExpedienteDetailScreen}
+                options={{
+                  cardStyleInterpolator: ({ current, layouts }) => ({
+                    cardStyle: {
+                      transform: [
+                        {
+                          translateY: current.progress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [layouts.screen.height, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  }),
+                }}
+              />
+              <Stack.Screen 
+                name="NuevoExpediente" 
+                component={NuevoExpedienteScreen}
+                options={{
+                  cardStyleInterpolator: ({ current, layouts }) => ({
+                    cardStyle: {
+                      transform: [
+                        {
+                          scale: current.progress.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.8, 1],
+                          }),
+                        },
+                      ],
+                    },
+                  }),
+                }}
+              />
+              <Stack.Screen name="Perfil" component={PerfilScreen} />
+              <Stack.Screen name="ChangePassword" component={ChangePasswordScreen} />
+              <Stack.Screen name="EditProfile" component={EditProfileScreen} />
+              <Stack.Screen name="SecuritySettings" component={SecuritySettingsScreen} />
+              <Stack.Screen name="NuevoUsuario" component={NuevoUsuarioScreen} />
+              <Stack.Screen name="SubirDocumento" component={SubirDocumentoScreen} />
+              <Stack.Screen name="FirmarDocumento" component={FirmarDocumentoScreen} />
+            </>
+          ) : (
+            // Usuario no autenticado - mostrar navegación de auth
+            <Stack.Screen name="Auth" component={AuthNavigator} />
+          )}
+        </Stack.Navigator>
+      </Suspense>
     </NavigationContainer>
   );
 };

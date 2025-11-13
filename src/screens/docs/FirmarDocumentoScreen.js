@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,21 @@ import {
   ScrollView,
   TouchableOpacity,
   Alert,
-  Image
+  Image,
+  Modal,
+  Platform,
+  ToastAndroid
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../../hooks/useAuth';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
 import AppInput from '../../components/AppInput';
 import AppButton from '../../components/AppButton';
+import { documentosApi } from '../../api/documentos.api';
+import { useRoute } from '@react-navigation/native';
 
 const FirmarDocumentoScreen = ({ navigation, route }) => {
-  const { documentoId } = route.params || {};
-  const { user, hasPermission } = useAuth();
+  const r = useRoute();
+  const { documentoId, expedienteId } = route.params || {};
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     tipo_firma: 'demo',
@@ -24,6 +28,13 @@ const FirmarDocumentoScreen = ({ navigation, route }) => {
     comentario: ''
   });
   const [errors, setErrors] = useState({});
+  const [status, setStatus] = useState(null);
+  const [selectedDocumento, setSelectedDocumento] = useState(null);
+  const [docModal, setDocModal] = useState(false);
+  const [docQuery, setDocQuery] = useState('');
+  const [docLoading, setDocLoading] = useState(false);
+  const [docError, setDocError] = useState('');
+  const [docResults, setDocResults] = useState([]);
 
   const validateForm = () => {
     const newErrors = {};
@@ -40,26 +51,95 @@ const FirmarDocumentoScreen = ({ navigation, route }) => {
     return Object.keys(newErrors).length === 0;
   };
 
+  // Cargar documento inicial o abrir selector
+  useEffect(() => {
+    (async () => {
+      try {
+        if (documentoId) {
+          const rs = await documentosApi.getDocumento(documentoId);
+          const doc = rs?.data?.documento || rs?.documento || rs;
+          if (doc?.id) setSelectedDocumento(doc);
+        } else {
+          setTimeout(() => setDocModal(true), 200);
+        }
+      } catch (_) {
+        setTimeout(() => setDocModal(true), 200);
+      }
+    })();
+  }, []);
+
+  // Búsqueda de documentos para el modal
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      try {
+        setDocError('');
+        setDocLoading(true);
+        const rs = await documentosApi.getDocumentos({ query: docQuery, expediente_id: expedienteId });
+        if (!cancelled) setDocResults(rs?.data?.documentos || rs?.documentos || []);
+      } catch (e) {
+        if (!cancelled) setDocError('No se pudieron cargar documentos');
+      } finally {
+        if (!cancelled) setDocLoading(false);
+      }
+    };
+    const t = setTimeout(run, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [docQuery]);
+
   const handleSubmit = async () => {
     if (!validateForm()) {
       return;
     }
 
+    if (!selectedDocumento || !selectedDocumento.id) {
+      Alert.alert('Error', 'Debes seleccionar el documento a firmar');
+      return;
+    }
+
     setLoading(true);
+    setStatus(null);
+
     try {
-      // Aquí implementarías la lógica para firmar el documento
-      Alert.alert(
-        'Éxito',
-        'Documento firmado correctamente',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack()
+      let response;
+      const targetId = selectedDocumento.id;
+
+      if (formData.tipo_firma === 'demo') {
+        response = await documentosApi.firmarDemo(targetId, {
+          comentario: formData.comentario
+        });
+      } else if (formData.tipo_firma === 'token') {
+        const preparacion = await documentosApi.prepararFirmaToken(targetId, {
+          comentario: formData.comentario
+        });
+
+        // Simulación de firma con token para el prototipo
+        const firmaBase64 = 'U1BKVF9UT0tFTl9ERU1P'; // "SPJT_TOKEN_DEMO" en base64
+
+        response = await documentosApi.completarFirmaToken(targetId, {
+          solicitudId: preparacion.data?.solicitudId,
+          firmaBase64,
+          certificadoSn: 'TOKEN-DEMO-CERT',
+          referenciaExterna: preparacion.data?.parametros?.nonce,
+          comentario: formData.comentario,
+          metadatosAdicionales: {
+            modo: 'simulado',
+            mensaje: 'Firma con token simulada en prototipo'
           }
-        ]
-      );
+        });
+      } else if (formData.tipo_firma === 'hsm') {
+        response = await documentosApi.firmarHSM(targetId, {
+          comentario: formData.comentario
+        });
+      }
+
+      setStatus({ type: 'success', message: response?.message || 'Documento firmado correctamente' });
+      navigation.navigate('Main', { screen: 'MainTabs', params: { screen: 'Documentos', params: { toast: 'Documento firmado', highlightId: selectedDocumento.id } } });
     } catch (error) {
-      Alert.alert('Error', 'Error al firmar el documento');
+      console.error('Error al firmar documento:', error);
+      const message = error.response?.data?.message || 'Error al firmar el documento';
+      setStatus({ type: 'error', message });
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }
@@ -125,17 +205,61 @@ const FirmarDocumentoScreen = ({ navigation, route }) => {
         <View style={styles.formContainer}>
           <Text style={styles.formTitle}>Configuración de Firma</Text>
           
-          {/* Información del documento */}
+          {/* Información del documento + selector */}
           <View style={styles.documentInfo}>
             <View style={styles.documentIcon}>
               <Ionicons name="document" size={32} color={COLORS.primary} />
             </View>
             <View style={styles.documentDetails}>
               <Text style={styles.documentTitle}>Documento a Firmar</Text>
-              <Text style={styles.documentName}>Resolución judicial #2024-001</Text>
-              <Text style={styles.documentSize}>2.5 MB - PDF</Text>
+              {selectedDocumento ? (
+                <>
+                  <Text style={styles.documentName}>{selectedDocumento.nombre}</Text>
+                  <Text style={styles.documentSize}>
+                    {(selectedDocumento.size / 1024 / 1024).toFixed(2)} MB - {selectedDocumento.tipo_mime?.toUpperCase() || 'N/A'}
+                  </Text>
+                </>
+              ) : (
+                <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.text.secondary }}>Selecciona un documento</Text>
+              )}
             </View>
+            <TouchableOpacity style={styles.changeButton} onPress={() => setDocModal(true)}>
+              <Ionicons name="search" size={18} color={COLORS.primary} />
+              <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.primary, marginLeft: SPACING.xs }}>Cambiar</Text>
+            </TouchableOpacity>
           </View>
+
+          {/* Modal: seleccionar documento */}
+          <Modal visible={docModal} transparent animationType="slide" onRequestClose={() => setDocModal(false)}>
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: SPACING.screenPadding }}>
+              <View style={{ backgroundColor: COLORS.surface, borderRadius: BORDER_RADIUS.lg, maxHeight: '75%', padding: SPACING.md }}>
+                <Text style={{ ...TYPOGRAPHY.h5, color: COLORS.text.primary, marginBottom: SPACING.md }}>Seleccionar documento</Text>
+                <AppInput label="Buscar" placeholder="Nombre o número de expediente" value={docQuery} onChangeText={setDocQuery} leftIcon="search" />
+                {docLoading ? (
+                  <Text style={{ ...TYPOGRAPHY.body2, color: COLORS.text.secondary }}>Cargando...</Text>
+                ) : docError ? (
+                  <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.error }}>{docError}</Text>
+                ) : (
+                  <ScrollView style={{ maxHeight: 350 }}>
+                    {(docResults || []).map((d) => (
+                      <TouchableOpacity key={d.id} style={{ paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border + '55' }} onPress={() => { setSelectedDocumento(d); setDocModal(false); }}>
+                        <Text style={{ ...TYPOGRAPHY.body2, color: COLORS.text.primary }}>{d.nombre}</Text>
+                        <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.text.secondary }}>Exp: {d.expediente_nro || 'N/A'} · {(d.size/1024/1024).toFixed(2)} MB</Text>
+                      </TouchableOpacity>
+                    ))}
+                    {(!docResults || docResults.length === 0) && (
+                      <Text style={{ ...TYPOGRAPHY.caption, color: COLORS.text.secondary }}>Sin resultados</Text>
+                    )}
+                  </ScrollView>
+                )}
+                <View style={{ alignItems: 'flex-end', marginTop: SPACING.md }}>
+                  <TouchableOpacity onPress={() => setDocModal(false)}>
+                    <Text style={{ ...TYPOGRAPHY.button, color: COLORS.primary }}>Cerrar</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          </Modal>
           
           {/* Tipo de firma */}
           <View style={styles.firmaTypeSection}>
@@ -207,6 +331,29 @@ const FirmarDocumentoScreen = ({ navigation, route }) => {
               • El documento quedará protegido contra modificaciones
             </Text>
           </View>
+
+          {status && (
+            <View
+              style={[
+                styles.statusBanner,
+                status.type === 'success' ? styles.statusSuccess : styles.statusError
+              ]}
+            >
+              <Ionicons
+                name={status.type === 'success' ? 'checkmark-circle' : 'alert-circle'}
+                size={20}
+                color={status.type === 'success' ? COLORS.success : COLORS.error}
+              />
+              <Text
+                style={[
+                  styles.statusText,
+                  status.type === 'success' ? styles.statusTextSuccess : styles.statusTextError
+                ]}
+              >
+                {status.message}
+              </Text>
+            </View>
+          )}
           
           <View style={styles.buttonContainer}>
             <AppButton
@@ -220,6 +367,7 @@ const FirmarDocumentoScreen = ({ navigation, route }) => {
               title="Firmar Documento"
               onPress={handleSubmit}
               loading={loading}
+              disabled={loading || !selectedDocumento}
               style={styles.submitButton}
             />
           </View>
@@ -319,6 +467,11 @@ const styles = StyleSheet.create({
   documentSize: {
     ...TYPOGRAPHY.caption,
     color: COLORS.text.secondary,
+  },
+  changeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.xs,
   },
   
   firmaTypeSection: {
@@ -423,6 +576,41 @@ const styles = StyleSheet.create({
     gap: SPACING.md,
     marginTop: SPACING.lg,
   },
+
+  statusBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.sm,
+    padding: SPACING.md,
+    borderRadius: BORDER_RADIUS.md,
+    marginBottom: SPACING.md,
+    ...SHADOWS.small,
+  },
+
+  statusSuccess: {
+    backgroundColor: COLORS.success + '20',
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.success,
+  },
+
+  statusError: {
+    backgroundColor: COLORS.error + '20',
+    borderLeftWidth: 4,
+    borderLeftColor: COLORS.error,
+  },
+
+  statusText: {
+    ...TYPOGRAPHY.body2,
+    flex: 1,
+  },
+
+  statusTextSuccess: {
+    color: COLORS.success,
+  },
+
+  statusTextError: {
+    color: COLORS.error,
+  },
   
   cancelButton: {
     flex: 1,
@@ -434,3 +622,6 @@ const styles = StyleSheet.create({
 });
 
 export default FirmarDocumentoScreen; 
+
+
+

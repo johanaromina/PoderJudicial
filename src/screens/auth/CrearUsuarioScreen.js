@@ -14,6 +14,7 @@ import AppInput from '../../components/AppInput';
 import AppButton from '../../components/AppButton';
 import JudicialLogo from '../../components/ui/JudicialLogo';
 import AnimatedWrapper, { ANIMATION_TYPES } from '../../components/ui/AnimatedWrapper';
+import { authApi } from '../../api/auth.api';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
 
 // Roles judiciales disponibles
@@ -109,28 +110,26 @@ const CrearUsuarioScreen = ({ navigation }) => {
   };
 
   const handleCrearUsuario = async () => {
-    if (!validateForm()) {
-      return;
-    }
-
+    if (!validateForm()) return;
     setLoading(true);
-
     try {
-      // Simular creación de usuario
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
+      const payload = {
+        nombre: `${formData.nombre} ${formData.apellido}`.trim(),
+        email: formData.email.trim(),
+        password: formData.password,
+        // Intentamos enviar el rol si el backend lo admite; si no, usará el rol por defecto
+        rol: formData.rol || undefined,
+      };
+      await authApi.register(payload);
+
       Alert.alert(
         'Usuario Creado',
-        'Tu cuenta ha sido creada exitosamente. Revisa tu email para activarla.',
-        [
-          {
-            text: 'OK',
-            onPress: () => navigation.goBack(),
-          },
-        ]
+        'Tu cuenta ha sido creada exitosamente.',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
       );
     } catch (error) {
-      Alert.alert('Error', 'No se pudo crear el usuario. Intente nuevamente.');
+      const message = error?.response?.data?.message || 'No se pudo crear el usuario. Intente nuevamente.';
+      Alert.alert('Error', message);
     } finally {
       setLoading(false);
     }

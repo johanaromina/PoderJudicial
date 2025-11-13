@@ -2,6 +2,17 @@ import api from './client';
 
 // API de autenticación
 export const authApi = {
+  // Registrar usuario
+  register: async (data) => {
+    try {
+      const response = await api.post('/auth/register', data);
+      return response.data;
+    } catch (error) {
+      console.error('API register - error:', error?.response?.data || error);
+      throw error;
+    }
+  },
+
   // Iniciar sesión
   login: async (credentials) => {
     try {
@@ -39,7 +50,13 @@ export const authApi = {
   // Cerrar sesión
   logout: async () => {
     try {
-      const response = await api.post('/auth/logout');
+      // Intentar enviar el refresh token para invalidarlo en el servidor
+      let refreshToken = null;
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        refreshToken = await AsyncStorage.getItem('auth_refresh_token');
+      } catch {}
+      const response = await api.post('/auth/logout', refreshToken ? { refreshToken } : {}, { timeout: 3000 });
       return response.data;
     } catch (error) {
       throw error;

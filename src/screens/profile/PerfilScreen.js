@@ -7,7 +7,10 @@ import {
   TouchableOpacity,
   Alert,
   Image,
-  Switch
+  Switch,
+  ActivityIndicator,
+  Platform,
+  ToastAndroid
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
@@ -18,6 +21,15 @@ const PerfilScreen = ({ navigation }) => {
   const { user, signOut, hasPermission } = useAuth();
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const showToast = (msg) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
+    } else if (Platform.OS === 'web') {
+      try { window.alert(msg); } catch { /* no-op */ }
+    }
+  };
 
   const handleLogout = () => {
     Alert.alert(
@@ -25,7 +37,15 @@ const PerfilScreen = ({ navigation }) => {
       '¿Está seguro que desea cerrar sesión?',
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Cerrar Sesión', onPress: signOut }
+        { text: 'Cerrar Sesión', onPress: async () => {
+            try {
+              setLoggingOut(true);
+              await signOut();
+              showToast('Sesión cerrada');
+            } finally {
+              setLoggingOut(false);
+            }
+          } }
       ]
     );
   };
@@ -105,6 +125,9 @@ const PerfilScreen = ({ navigation }) => {
     <View style={styles.container}>
       {/* Header con logo */}
       <View style={styles.header}>
+        <TouchableOpacity style={styles.backButton} onPress={() => { try { if (navigation.canGoBack && navigation.canGoBack()) navigation.goBack(); else navigation.navigate('MainTabs', { screen: 'Home' }); } catch {} }}>
+          <Ionicons name="arrow-back" size={22} color={COLORS.text.primary} />
+        </TouchableOpacity>
         <Image
           source={require('../../../assets/WhatsApp Image 2025-08-22 at 07.58.37 (3).jpeg')}
           style={styles.logo}
@@ -239,9 +262,13 @@ const PerfilScreen = ({ navigation }) => {
         </View>
 
         {/* Botón de cerrar sesión */}
-        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={24} color={COLORS.text.inverse} />
-          <Text style={styles.logoutButtonText}>Cerrar Sesión</Text>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} disabled={loggingOut}>
+          {loggingOut ? (
+            <ActivityIndicator size={20} color={COLORS.text.inverse} />
+          ) : (
+            <Ionicons name="log-out-outline" size={24} color={COLORS.text.inverse} />
+          )}
+          <Text style={styles.logoutButtonText}>{loggingOut ? 'Cerrando…' : 'Cerrar Sesión'}</Text>
         </TouchableOpacity>
 
         {/* Footer */}
@@ -272,6 +299,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     ...SHADOWS.medium,
+  },
+  backButton: {
+    padding: SPACING.xs,
+    marginRight: SPACING.sm,
   },
   
   logo: {

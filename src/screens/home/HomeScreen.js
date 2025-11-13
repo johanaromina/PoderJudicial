@@ -7,15 +7,28 @@ import {
   TouchableOpacity,
   RefreshControl,
   Alert,
-  Image
+  Image,
+  ActivityIndicator,
+  Platform,
+  ToastAndroid
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../hooks/useAuth';
+import { USER_ROLES } from '../../types';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
 
 const HomeScreen = ({ navigation }) => {
   const { user, signOut } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const showToast = (msg) => {
+    if (Platform.OS === 'android') {
+      ToastAndroid.show(msg, ToastAndroid.SHORT);
+    } else if (Platform.OS === 'web') {
+      try { window.alert(msg); } catch { /* no-op */ }
+    }
+  };
 
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
@@ -29,7 +42,15 @@ const HomeScreen = ({ navigation }) => {
       '¿Está seguro que desea cerrar sesión?',
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Cerrar Sesión', onPress: signOut }
+        { text: 'Cerrar Sesión', onPress: async () => {
+            try {
+              setLoggingOut(true);
+              await signOut();
+              showToast('Sesión cerrada');
+            } finally {
+              setLoggingOut(false);
+            }
+          } }
       ]
     );
   };
@@ -81,6 +102,9 @@ const HomeScreen = ({ navigation }) => {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerContent}>
+          <TouchableOpacity style={styles.menuButton} onPress={() => { const p = navigation.getParent && navigation.getParent(); if (p && p.openDrawer) p.openDrawer(); }}>
+            <Ionicons name="menu" size={24} color={COLORS.text.inverse} />
+          </TouchableOpacity>
           <View style={styles.headerLeft}>
             <Image
               source={require('../../../assets/images (1).jpg')}
@@ -93,8 +117,17 @@ const HomeScreen = ({ navigation }) => {
               <Text style={styles.userRole}>{user?.rol || 'Rol'}</Text>
             </View>
           </View>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Ionicons name="log-out-outline" size={24} color={COLORS.error} />
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} disabled={loggingOut}>
+            {loggingOut ? (
+              <ActivityIndicator size={20} color={COLORS.error} />
+            ) : (
+              <>
+                <Ionicons name="log-out-outline" size={24} color={COLORS.error} />
+                {Platform.OS === 'web' && (
+                  <Text style={styles.logoutLabel}>Salir</Text>
+                )}
+              </>
+            )}
           </TouchableOpacity>
         </View>
         
@@ -167,7 +200,7 @@ const HomeScreen = ({ navigation }) => {
             color={COLORS.success}
             onPress={() => navigation.navigate('FirmarDocumento')}
           />
-          {user?.rol === 'admin' && (
+          {(user?.rol === USER_ROLES.ADMIN) && (
             <QuickAction
               title="Gestionar Usuarios"
               subtitle="Administrar usuarios del sistema"
@@ -239,6 +272,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  menuButton: {
+    marginRight: SPACING.md,
+  },
   
   headerLeft: {
     flexDirection: 'row',
@@ -283,7 +319,16 @@ const styles = StyleSheet.create({
   },
   
   logoutButton: {
-    padding: SPACING.sm,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  logoutLabel: {
+    ...TYPOGRAPHY.caption,
+    color: COLORS.error,
+    marginLeft: SPACING.xs,
+    fontWeight: '600',
   },
   
   systemTitleContainer: {

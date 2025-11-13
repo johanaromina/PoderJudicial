@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,9 @@ import {
   RefreshControl,
   TextInput,
   Alert,
-  Image
+  Image,
+  Platform,
+  ToastAndroid
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
@@ -16,27 +18,63 @@ import { documentosApi } from '../../api/documentos.api';
 import { useAuth } from '../../hooks/useAuth';
 import { COLORS, TYPOGRAPHY, SPACING, BORDER_RADIUS, SHADOWS } from '../../theme';
 import { DOCUMENTO_STATUS } from '../../types';
+import { useRoute } from '@react-navigation/native';
 
 const DocumentosScreen = ({ navigation }) => {
+  const route = useRoute();
   const { user, hasPermission } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('todos');
+  const [highlightId, setHighlightId] = useState(null);
+  const scrollRef = useRef(null);
+  const itemPositions = useRef({});
 
   // Obtener documentos con React Query
   const { data: documentos, isLoading, error, refetch } = useQuery({
     queryKey: ['documentos', searchQuery, selectedFilter],
     queryFn: () => documentosApi.getDocumentos({
-      search: searchQuery,
+      query: searchQuery,
       estado: selectedFilter === 'todos' ? undefined : selectedFilter
     }),
     staleTime: 5 * 60 * 1000,
   });
 
+  const documentosList = documentos?.data?.documentos ?? documentos?.documentos ?? [];
+
   const onRefresh = React.useCallback(() => {
     setRefreshing(true);
     refetch().finally(() => setRefreshing(false));
   }, [refetch]);
+
+  // Toast y resaltado tras crear
+  useEffect(() => {
+    const toast = route.params?.toast;
+    const hl = route.params?.highlightId;
+    if (toast) {
+      if (Platform.OS === 'android') ToastAndroid.show(toast, ToastAndroid.SHORT);
+      else if (Platform.OS === 'web') { try { window.alert(toast); } catch {} }
+      else Alert.alert('', toast);
+      try { navigation.setParams({ toast: undefined }); } catch {}
+    }
+    if (hl) {
+      setHighlightId(Number(hl));
+      try { refetch(); } catch {}
+      const t = setTimeout(() => setHighlightId(null), 6000);
+      try { navigation.setParams({ highlightId: undefined }); } catch {}
+      return () => clearTimeout(t);
+    }
+  }, [route.params?.toast]);
+
+  // Scroll automático al resaltado
+  useEffect(() => {
+    if (!highlightId || !scrollRef.current) return;
+    const y = itemPositions.current[highlightId];
+    if (typeof y === 'number') {
+      const target = Math.max(y - 60, 0);
+      setTimeout(() => { try { scrollRef.current.scrollTo({ y: target, animated: true }); } catch {} }, 120);
+    }
+  }, [highlightId, documentosList]);
 
   const handleSubirDocumento = () => {
     if (hasPermission('documentos.write')) {
@@ -63,6 +101,7 @@ const DocumentosScreen = ({ navigation }) => {
     switch (estado) {
       case 'borrador': return COLORS.text.secondary;
       case 'pendiente_firma': return COLORS.warning;
+      case 'en_firma': return COLORS.info;
       case 'firmado': return COLORS.success;
       case 'verificado': return COLORS.info;
       default: return COLORS.text.secondary;
@@ -73,6 +112,7 @@ const DocumentosScreen = ({ navigation }) => {
     switch (estado) {
       case 'borrador': return 'Borrador';
       case 'pendiente_firma': return 'Pendiente Firma';
+      case 'en_firma': return 'En Proceso';
       case 'firmado': return 'Firmado';
       case 'verificado': return 'Verificado';
       default: return estado;
@@ -91,7 +131,10 @@ const DocumentosScreen = ({ navigation }) => {
   );
 
   const DocumentoCard = ({ documento }) => (
-    <View style={styles.documentoCard}>
+    <View
+      style={[styles.documentoCard, documento.id === highlightId && styles.documentoCardHighlighted]}
+      onLayout={(e) => { itemPositions.current[documento.id] = e.nativeEvent.layout.y; }}
+    >
       <View style={styles.documentoHeader}>
         <View style={styles.documentoIcon}>
           <Ionicons name="document" size={24} color={COLORS.primary} />
@@ -235,6 +278,12 @@ const DocumentosScreen = ({ navigation }) => {
             onPress={() => setSelectedFilter('pendiente_firma')}
           />
           <FilterButton
+            title="En Firma"
+            value="en_firma"
+            isSelected={selectedFilter === 'en_firma'}
+            onPress={() => setSelectedFilter('en_firma')}
+          />
+          <FilterButton
             title="Firmados"
             value="firmado"
             isSelected={selectedFilter === 'firmado'}
@@ -259,6 +308,7 @@ const DocumentosScreen = ({ navigation }) => {
 
       {/* Lista de Documentos */}
       <ScrollView
+        ref={scrollRef}
         style={styles.documentosList}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
@@ -270,8 +320,8 @@ const DocumentosScreen = ({ navigation }) => {
             <Ionicons name="hourglass" size={48} color={COLORS.primary} />
             <Text style={styles.loadingText}>Cargando documentos...</Text>
           </View>
-        ) : documentos?.length > 0 ? (
-          documentos.map((documento) => (
+        ) : documentosList.length > 0 ? (
+          documentosList.map((documento) => (
             <DocumentoCard key={documento.id} documento={documento} />
           ))
         ) : (
@@ -410,6 +460,10 @@ const styles = StyleSheet.create({
     padding: SPACING.md,
     marginBottom: SPACING.md,
     ...SHADOWS.medium,
+  },
+  documentoCardHighlighted: {
+    borderWidth: 2,
+    borderColor: COLORS.primary,
   },
   
   documentoHeader: {
